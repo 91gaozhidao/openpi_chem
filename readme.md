@@ -1,5 +1,6 @@
-conda create -n ffmpeg_env -c conda-forge "ffmpeg=7.0.2" -y
-export LD_LIBRARY_PATH=/data1/workspace/gaoyuxuan/miniforge3/envs/ffmpeg_env/lib:$LD_LIBRARY_PATH
+- conda create -n ffmpeg_env -c conda-forge "ffmpeg=7.0.2" -y
+
+- export LD_LIBRARY_PATH=/data1/workspace/gaoyuxuan/miniforge3/envs/ffmpeg_env/lib:$LD_LIBRARY_PATH
 
 # 模型训练
 1. 单/双臂配置确认
