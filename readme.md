@@ -2,6 +2,15 @@
 
 - export LD_LIBRARY_PATH=/data1/workspace/gaoyuxuan/miniforge3/envs/ffmpeg_env/lib:$LD_LIBRARY_PATH
 
+- CUDA_VISIBLE_DEVICES=1 nohup uv run --no-sync torchrun \
+    --standalone \
+    --nnodes=1 \
+    --nproc_per_node=1 \
+    scripts/train_pytorch.py pi0_chem \
+    --exp_name pour20260407_drifting \
+    --overwrite \
+    > output_train.log 2>&1 &
+
 # 模型训练
 1. 单/双臂配置确认
    + 双臂训练：
