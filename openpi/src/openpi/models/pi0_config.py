@@ -25,6 +25,12 @@ class Pi0Config(_model.BaseModelConfig):
     action_dim: int = 32
     action_horizon: int = 50
     max_token_len: int = None  # type: ignore
+    
+    # Drifting loss hyperparameters
+    gen_per_label: int = 4
+    per_timestep_loss: bool = False
+    temperatures: tuple[float, ...] = (0.02, 0.05, 0.2)
+
     # Pi05 has two differences from Pi0:
     # - the state input is part of the discrete language tokens rather than a continuous input that is part of the suffix
     # - the action expert uses adaRMSNorm to inject the flow matching timestep

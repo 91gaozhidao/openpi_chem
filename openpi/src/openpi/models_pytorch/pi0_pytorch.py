@@ -314,21 +314,32 @@ class PI0Pytorch(nn.Module):
         return embs, pad_masks, att_masks, adarms_cond
 
     def forward(self, observation, actions, noise=None, time=None) -> Tensor:
-        """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
+        """Do a full training forward pass and compute the drifting loss"""
         images, img_masks, lang_tokens, lang_masks, state = self._preprocess_observation(observation, train=True)
 
+        B = actions.shape[0]
+        G = getattr(self.config, 'gen_per_label', 8)
+        per_timestep_loss = getattr(self.config, 'per_timestep_loss', True)
+        R_list = getattr(self.config, 'temperatures', (0.02, 0.05, 0.2))
+
         if noise is None:
-            noise = self.sample_noise(actions.shape, actions.device)
+            actions_shape_bg = (B * G, self.config.action_horizon, self.config.action_dim)
+            noise = self.sample_noise(actions_shape_bg, actions.device)
 
-        if time is None:
-            time = self.sample_time(actions.shape[0], actions.device)
-
-        time_expanded = time[:, None, None]
-        x_t = time_expanded * noise + (1 - time_expanded) * actions
-        u_t = noise - actions
+        # Drifting loss uses a single forward pass with time=0 (represented as timesteps=0)
+        time = torch.zeros(B * G, dtype=torch.float32, device=actions.device)
+        
+        # repeat suffix state G times
+        state_bg = state.repeat_interleave(G, dim=0)
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, lang_tokens, lang_masks)
-        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(state, x_t, time)
+        
+        # repeat prefix inputs G times
+        prefix_embs = prefix_embs.repeat_interleave(G, dim=0)
+        prefix_pad_masks = prefix_pad_masks.repeat_interleave(G, dim=0)
+        prefix_att_masks = prefix_att_masks.repeat_interleave(G, dim=0)
+
+        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(state_bg, noise, time)
         if (
             self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
             == torch.bfloat16
@@ -370,11 +381,29 @@ class PI0Pytorch(nn.Module):
 
         v_t = self._apply_checkpoint(action_out_proj_func, suffix_out)
 
-        return F.mse_loss(u_t, v_t, reduction="none")
+        from openpi.models_pytorch.drifting_util import drift_loss
+        
+        pred_actions = v_t.view(B, G, self.config.action_horizon, self.config.action_dim)
+        
+        if per_timestep_loss:
+            T_horizon = self.config.action_horizon
+            total_loss = 0
+            for t in range(T_horizon):
+                gen_t = pred_actions[:, :, t, :]
+                pos_t = actions[:, t, :].unsqueeze(1)
+                loss_t, info_t = drift_loss(gen_t, pos_t, R_list=R_list)
+                total_loss = total_loss + loss_t
+            loss = total_loss / T_horizon
+        else:
+            gen = pred_actions.reshape(B, G, -1)
+            pos = actions.reshape(B, 1, -1)
+            loss, info = drift_loss(gen, pos, R_list=R_list)
+
+        return loss
 
     @torch.no_grad()
     def sample_actions(self, device, observation, noise=None, num_steps=10) -> Tensor:
-        """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
+        """Do a single inference forward and compute the action (batch_size x num_steps x num_motors)"""
         bsize = observation.state.shape[0]
         if noise is None:
             actions_shape = (bsize, self.config.action_horizon, self.config.action_dim)
@@ -398,25 +427,18 @@ class PI0Pytorch(nn.Module):
             use_cache=True,
         )
 
-        dt = -1.0 / num_steps
-        dt = torch.tensor(dt, dtype=torch.float32, device=device)
+        time = torch.zeros((bsize,), dtype=torch.float32, device=device)
 
-        x_t = noise
-        time = torch.tensor(1.0, dtype=torch.float32, device=device)
-        while time >= -dt / 2:
-            expanded_time = time.expand(bsize)
-            v_t = self.denoise_step(
-                state,
-                prefix_pad_masks,
-                past_key_values,
-                x_t,
-                expanded_time,
-            )
+        # Single step predictions for drifting loss inference
+        v_t = self.denoise_step(
+            state,
+            prefix_pad_masks,
+            past_key_values,
+            noise,
+            time,
+        )
 
-            # Euler step - use new tensor assignment instead of in-place operation
-            x_t = x_t + dt * v_t
-            time += dt
-        return x_t
+        return v_t
 
     def denoise_step(
         self,
