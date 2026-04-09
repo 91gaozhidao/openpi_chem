@@ -23,7 +23,7 @@ class Pi0Config(_model.BaseModelConfig):
 
     # Set the model specific defaults.
     action_dim: int = 32
-    action_horizon: int = 50
+    action_horizon: int = 16
     max_token_len: int = None  # type: ignore
     
     # Drifting loss hyperparameters

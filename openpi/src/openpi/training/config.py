@@ -246,7 +246,7 @@ class ChemDataConfig(DataConfigFactory):
                 _transforms.RepackTransform(
                     {
                         "camera_head": "observation.images.head",
-                        "camera_left_wrist": "observation.images.left_wrist",
+                        #"camera_left_wrist": "observation.images.left_wrist",
                         "camera_right_wrist": "observation.images.right_wrist",
                         "state": "observation.state",
                         "action": "action",
@@ -553,7 +553,7 @@ class TrainConfig:
     # Base directory for config assets (e.g., norm stats).
     assets_base_dir: str = "./assets"
     # Base directory for checkpoints.
-    checkpoint_base_dir: str = "/data/workspace/zhangxin/checkpoints"
+    checkpoint_base_dir: str = "/data1/workspace/gaoyuxuan/openpi_chem/openpi/checkpoint"
 
     # Random seed that will be used by random generators during training.
     seed: int = 42
@@ -622,21 +622,22 @@ _CONFIGS = [
         name="pi0_chem",
         model=pi0_config.Pi0Config(paligemma_variant="gemma_2b_lora", action_expert_variant="gemma_300m_lora"),
         batch_size=32,
+        pytorch_weight_path="/data1/workspace/gaoyuxuan/openpi_chem/openpi/pretrained/openpi-assets/checkpoints/pi0_base_pytorch", 
         data=ChemDataConfig(
-            repo_id="/data/shared_workspace/embodied_chemist/data/scoop20260204_right",
+            repo_id="/data1/shared_workspace/embodied_chemist/data/pour20260407_right",
             assets=AssetsConfig(
                 # asset_id="chem",
-                assets_dir="/data/workspace/zhangxin/openpi/pretrained/pi0_base/assets",
+                assets_dir="/data1/workspace/gaoyuxuan/openpi_chem/openpi/pretrained/openpi-assets/checkpoints/pi0_base/assets",
             ),
             base_config=DataConfig(
                 prompt_from_task=True,
                 repo_id="xixihaha",
             ),
         ),
-        weight_loader=weight_loaders.CheckpointWeightLoader("/data/workspace/zhangxin/openpi/pretrained/pi0_base/params"),
-        num_train_steps=80000,
-        save_interval=5000,
-        keep_period= 5000,
+        weight_loader=weight_loaders.CheckpointWeightLoader("/data1/workspace/gaoyuxuan/openpi_chem/openpi/pretrained/openpi-assets/checkpoints/pi0_base/params"),
+        num_train_steps=12115,
+        save_interval=3028,
+        keep_period= 3028,
         freeze_filter=pi0_config.Pi0Config(
             paligemma_variant="gemma_2b_lora", action_expert_variant="gemma_300m_lora"
         ).get_freeze_filter(),
