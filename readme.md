@@ -8,8 +8,7 @@
     --nproc_per_node=1 \
     scripts/train_pytorch.py pi0_chem \
     --exp_name pour20260407_drifting \
-    --overwrite \
-    > output_train.log 2>&1 &
+    --overwrite > output_train.log 2>&1 &
 
 # 模型训练
 1. 单/双臂配置确认
