@@ -318,9 +318,9 @@ class PI0Pytorch(nn.Module):
         images, img_masks, lang_tokens, lang_masks, state = self._preprocess_observation(observation, train=True)
 
         B = actions.shape[0]
-        G = getattr(self.config, 'gen_per_label', 8)
-        per_timestep_loss = getattr(self.config, 'per_timestep_loss', True)
-        R_list = getattr(self.config, 'temperatures', (0.02, 0.05, 0.2))
+        G = getattr(self.config, 'gen_samples', 4)
+        per_step_loss = getattr(self.config, 'per_step_loss', False)
+        temperatures = tuple(getattr(self.config, 'temperatures', (0.02, 0.05, 0.2)))
 
         if noise is None:
             actions_shape_bg = (B * G, self.config.action_horizon, self.config.action_dim)
@@ -385,16 +385,16 @@ class PI0Pytorch(nn.Module):
         
         pred_actions = v_t.view(B, G, self.config.action_horizon, self.config.action_dim)
         
-        if per_timestep_loss:
+        if per_step_loss:
             T_horizon = self.config.action_horizon
             total_loss = 0
             for t in range(T_horizon):
                 gen_t = pred_actions[:, :, t, :]
                 pos_t = actions[:, t, :].unsqueeze(1)
                 loss_t, info_t = compute_dbp_loss(
-                    generated_trajectories=gen_t, 
-                    expert_demonstrations=pos_t, 
-                    temperature_schedule=R_list
+                    preds=gen_t, 
+                    pos_targets=pos_t, 
+                    temp_schedule=temperatures
                 )
                 total_loss = total_loss + loss_t
             loss = total_loss / T_horizon
@@ -402,9 +402,9 @@ class PI0Pytorch(nn.Module):
             gen = pred_actions.reshape(B, G, -1)
             pos = actions.reshape(B, 1, -1)
             loss, info = compute_dbp_loss(
-                generated_trajectories=gen, 
-                expert_demonstrations=pos, 
-                temperature_schedule=R_list
+                preds=gen, 
+                pos_targets=pos, 
+                temp_schedule=temperatures
             )
 
         return loss

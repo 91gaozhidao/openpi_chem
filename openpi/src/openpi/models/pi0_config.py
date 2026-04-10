@@ -26,9 +26,9 @@ class Pi0Config(_model.BaseModelConfig):
     action_horizon: int = 16
     max_token_len: int = None  # type: ignore
     
-    # Drifting loss hyperparameters
-    gen_per_label: int = 4
-    per_timestep_loss: bool = False
+    # Drift-Based Policy (DBP) config
+    gen_samples: int = 4
+    per_step_loss: bool = False
     temperatures: tuple[float, ...] = (0.02, 0.05, 0.2)
 
     # Pi05 has two differences from Pi0:

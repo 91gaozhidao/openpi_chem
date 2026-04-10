@@ -30,13 +30,13 @@ def compute_pairwise_euclidean_distance(x: torch.Tensor, y: torch.Tensor, eps: f
 
 
 def compute_dbp_loss(
-    generated_trajectories: torch.Tensor, 
-    expert_demonstrations: torch.Tensor, 
-    negative_samples: torch.Tensor = None, 
-    weight_generated: torch.Tensor = None, 
-    weight_expert: torch.Tensor = None,
-    weight_negative: torch.Tensor = None, 
-    temperature_schedule: tuple[float, ...] = (0.02, 0.05, 0.2)
+    preds: torch.Tensor, 
+    pos_targets: torch.Tensor, 
+    neg_targets: torch.Tensor = None, 
+    w_pred: torch.Tensor = None, 
+    w_pos: torch.Tensor = None,
+    w_neg: torch.Tensor = None, 
+    temp_schedule: tuple[float, ...] = (0.02, 0.05, 0.2)
 ) -> tuple[torch.Tensor, dict]:
     """
     Computes the Drift-Based Policy (DBP) Loss, leveraging thermodynamic-inspired attractive 
@@ -47,129 +47,160 @@ def compute_dbp_loss(
     scaled across a multi-temperature schedule to smoothen the optimization landscape.
 
     Args:
-        generated_trajectories (torch.Tensor): Current policy outputs, shape [Batch, Num_Gen, Seq_Len].
-        expert_demonstrations (torch.Tensor): Ground-truth target references, shape [Batch, Num_Expert, Seq_Len].
-        negative_samples (torch.Tensor, optional): Explicit negative modes to repel. Defaults to None.
-        weight_generated (torch.Tensor, optional): Importance weights for generated samples. Defaults to 1.0.
-        weight_expert (torch.Tensor, optional): Importance weights for expert samples. Defaults to 1.0.
-        weight_negative (torch.Tensor, optional): Importance weights for negative samples. Defaults to 1.0.
-        temperature_schedule (tuple[float, ...]): The sequence of computational temperatures (R).
+        preds (torch.Tensor): Current policy outputs, shape [Batch, Num_Gen, Seq_Len].
+        pos_targets (torch.Tensor): Ground-truth target references, shape [Batch, Num_Expert, Seq_Len].
+        neg_targets (torch.Tensor, optional): Explicit negative modes to repel. Defaults to None.
+        w_pred (torch.Tensor, optional): Importance weights for generated samples. Defaults to 1.0.
+        w_pos (torch.Tensor, optional): Importance weights for expert samples. Defaults to 1.0.
+        w_neg (torch.Tensor, optional): Importance weights for negative samples. Defaults to 1.0.
+        temp_schedule (tuple[float, ...]): The sequence of computational temperatures (R).
         
     Returns:
         tuple[torch.Tensor, dict]:
             - loss (torch.Tensor): The aggregated scalar DBP optimization loss per batch.
             - metrics (dict): Diagnostics dictionary capturing gradient scales and force magnitudes across temperatures.
     """
-    batch_size, num_generated, sequence_length = generated_trajectories.shape
-    num_expert = expert_demonstrations.shape[1]
+    batch_size, num_preds, seq_len = preds.shape
+    num_pos = pos_targets.shape[1]
 
     # Initialize empty negatives if unlabeled / unsupervised negatives are omitted
-    if negative_samples is None:
-        negative_samples = generated_trajectories.new_zeros(batch_size, 0, sequence_length)
-    num_negative = negative_samples.shape[1]
+    if neg_targets is None:
+        neg_targets = preds.new_zeros(batch_size, 0, seq_len)
+    num_neg = neg_targets.shape[1]
 
     # Default to uniform importance weighting if specific priors are unprovided
-    if weight_generated is None:
-        weight_generated = generated_trajectories.new_ones(batch_size, num_generated)
-    if weight_expert is None:
-        weight_expert = generated_trajectories.new_ones(batch_size, num_expert)
-    if weight_negative is None:
-        weight_negative = generated_trajectories.new_ones(batch_size, num_negative)
+    if w_pred is None:
+        w_pred = preds.new_ones(batch_size, num_preds)
+    if w_pos is None:
+        w_pos = preds.new_ones(batch_size, num_pos)
+    if w_neg is None:
+        w_neg = preds.new_ones(batch_size, num_neg)
 
     # Enforce strict float precision alignment across tensors for stability
-    generated_trajectories = generated_trajectories.float()
-    expert_demonstrations = expert_demonstrations.float()
-    negative_samples = negative_samples.float()
-    weight_generated = weight_generated.float()
-    weight_expert = weight_expert.float()
-    weight_negative = weight_negative.float()
+    preds = preds.float()
+    pos_targets = pos_targets.float()
+    neg_targets = neg_targets.float()
+    w_pred = w_pred.float()
+    w_pos = w_pos.float()
+    w_neg = w_neg.float()
 
     # Anchor the computational graph to prevent self-referential gradient collapse
-    anchored_generated = generated_trajectories.detach()
+    anchored_preds = preds.detach()
     
     # Concatenate all spatial targets: [Generated (self), Negatives, Positives (Experts)]
-    target_manifold = torch.cat([anchored_generated, negative_samples, expert_demonstrations], dim=1)
-    target_weights = torch.cat([weight_generated, weight_negative, weight_expert], dim=1)
+    all_targets = torch.cat([anchored_preds, neg_targets, pos_targets], dim=1)
+    all_weights = torch.cat([w_pred, w_neg, w_pos], dim=1)
 
-    # Compute explicit mathematical goal derivations without retaining autodiff graphs
+    # -------------------------------------------------------------------------
+    # Phase 1: Spatial Relationship & Manifold Scaling
+    # -------------------------------------------------------------------------
     with torch.no_grad():
         diagnostics = {}
         
-        # 1. Spatial Relationship & Manifold Scaling
-        pairwise_distances = compute_pairwise_euclidean_distance(anchored_generated, target_manifold)
-        weighted_distances = pairwise_distances * target_weights[:, None, :]
+        # Calculate pairwise Euclidean distances between generated predictions and all target modalities
+        # dists shape: [Batch, Num_Preds, Num_Preds + Num_Neg + Num_Pos]
+        dists = compute_pairwise_euclidean_distance(anchored_preds, all_targets)
         
-        # Compute global spatial scaling factor independent of dimensional sparsity
-        global_scale = weighted_distances.mean() / target_weights.mean()
-        diagnostics["global_scale"] = global_scale
+        # Apply importance weights (w_pred, w_neg, w_pos) to the calculated distances
+        weighted_dists = dists * all_weights[:, None, :]
+        
+        # Compute global spatial scaling factor (approximates the diameter of the current manifold)
+        # We normalize by the mean weight to ensure invariance to the absolute magnitude of weights
+        scale = weighted_dists.mean() / all_weights.mean()
+        diagnostics["global_scale"] = scale
 
-        # Dimensional normalization to standardize hypersphere distances
-        dimensional_scale = torch.clamp(global_scale / (sequence_length ** 0.5), min=1e-3)
-        anchored_gen_normalized = anchored_generated / dimensional_scale
-        targets_normalized = target_manifold / dimensional_scale
+        # Establish a dimensional scaling factor to correct for the curse of dimensionality
+        # sequence_length acts as the dimension count of the trajectory vector
+        dim_scale = torch.clamp(scale / (seq_len ** 0.5), min=1e-3)
+        
+        # Normalize representations to project them into a roughly unit-scale structural space
+        anchored_preds_norm = anchored_preds / dim_scale
+        targets_norm = all_targets / dim_scale
 
-        # Normalize pairwise metrics based on globally approximated scale
-        distance_normalized = pairwise_distances / torch.clamp(global_scale, min=1e-3)
+        # Normalize pairwise distance metrics based on the globally approximated scale
+        dists_norm = dists / torch.clamp(scale, min=1e-3)
 
-        # 2. Prevent collapsing self-connections iteratively (Masking Gen-to-Gen self-loops)
+        # -------------------------------------------------------------------------
+        # Phase 2: Topology Regularization (Prevent self-loops)
+        # -------------------------------------------------------------------------
+        # We must prevent 'Prediction A' from forming an attractive force towards itself.
+        # We add a massive penalty (100.0) exclusively to the diagonal of the Prediction-to-Prediction distance matrix.
         penalty_mask_value = 100.0
-        identity_mask = torch.eye(num_generated, device=generated_trajectories.device, dtype=generated_trajectories.dtype)
-        spatial_block_mask = F.pad(identity_mask, (0, num_negative + num_expert))
-        spatial_block_mask = spatial_block_mask.unsqueeze(0)
-        distance_normalized = distance_normalized + spatial_block_mask * penalty_mask_value
+        identity_mask = torch.eye(num_preds, device=preds.device, dtype=preds.dtype)
+        # Pad the mask to cover the shape [Num_Preds, Num_Preds + Num_Neg + Num_Pos]
+        # Padding format: (pad_last_dim_left, pad_last_dim_right) -> pad 0 on left, Num_Neg + Num_Pos on right
+        spatial_block_mask = F.pad(identity_mask, (0, num_neg + num_pos)).unsqueeze(0)
+        dists_norm = dists_norm + spatial_block_mask * penalty_mask_value
 
-        # 3. Simulate Thermodynamic Gradient Forces via Temperature Schedule
-        aggregated_forces = torch.zeros_like(anchored_gen_normalized)
+        # -------------------------------------------------------------------------
+        # Phase 3: Thermodynamic Gradient Force Simulation across Temperatures
+        # -------------------------------------------------------------------------
+        aggregated_forces = torch.zeros_like(anchored_preds_norm)
 
-        for temperature in temperature_schedule:
-            # Formulate unnormalized softmax logits via inverse temperature scaling
-            logits = -distance_normalized / temperature
+        for temperature in temp_schedule:
+            # 3.1: Formulate unnormalized softmax logits via inverse temperature scaling (T)
+            # Smaller T focuses strictly on nearest neighbors; Larger T sees the global manifold structures
+            logits = -dists_norm / temperature
 
-            # Compute symmetrical attention/affinity across trajectory proximities
+            # 3.2: Compute symmetrical attention/affinity matrices
+            # affinity_forward: How strongly a Prediction is attracted to a Target (dim=-1)
+            # affinity_backward: How strongly a Target attracts a Prediction (dim=-2)
             affinity_forward = torch.softmax(logits, dim=-1)
             affinity_backward = torch.softmax(logits, dim=-2)
             
-            # Formulate mutual structural affinity to restrict purely directional collapse
+            # 3.3: Calculate Mutual Structural Affinity
+            # Geometric mean explicitly restricts purely unidirectional collapse (e.g., all preds collapsing to 1 strong expert)
             mutual_affinity = torch.sqrt(torch.clamp(affinity_forward * affinity_backward, min=1e-6))
-            mutual_affinity = mutual_affinity * target_weights[:, None, :]
+            mutual_affinity = mutual_affinity * all_weights[:, None, :]
 
-            # Partition geometric subsets
-            split_boundary = num_generated + num_negative
-            affinity_negative_cluster = mutual_affinity[:, :, :split_boundary]
-            affinity_expert_cluster = mutual_affinity[:, :, split_boundary:]
+            # 3.4: Partition topological subsets (Negative Modes vs. Expert Positives)
+            split_boundary = num_preds + num_neg
+            affinity_neg_cluster = mutual_affinity[:, :, :split_boundary]  # Includes self-pred and negative forces
+            affinity_pos_cluster = mutual_affinity[:, :, split_boundary:]  # Includes expert target forces
 
-            # Derive geometric force vectors (repulsion from negatives vs. attraction to experts)
-            sum_expert_attraction = affinity_expert_cluster.sum(dim=-1, keepdim=True)
-            repulsive_coefficient = -affinity_negative_cluster * sum_expert_attraction
+            # 3.5: Formulate thermodynamic push-pull coefficients
+            # Experts exert highly attractive forces proportionate to how far away negative boundaries are
+            sum_pos_attraction = affinity_pos_cluster.sum(dim=-1, keepdim=True)
+            repulsive_coeff = -affinity_neg_cluster * sum_pos_attraction
             
-            sum_negative_repulsion = affinity_negative_cluster.sum(dim=-1, keepdim=True)
-            attractive_coefficient = affinity_expert_cluster * sum_negative_repulsion
+            # Negatives exert repulsive forces proportionate to how strong the expert attraction is
+            sum_neg_repulsion = affinity_neg_cluster.sum(dim=-1, keepdim=True)
+            attractive_coeff = affinity_pos_cluster * sum_neg_repulsion
 
-            # Aggregate coefficients along manifold topological boundaries
-            force_coefficients = torch.cat([repulsive_coefficient, attractive_coefficient], dim=2)
-            total_gradient_force = torch.einsum("biy,byx->bix", force_coefficients, targets_normalized)
+            # Concatenate generalized coefficients along the target manifold elements
+            force_coeffs = torch.cat([repulsive_coeff, attractive_coeff], dim=2)
+            
+            # 3.6: Synthesize true structural gradient forces via linear combinations 
+            # Multiplies coefficients by standard target vectors to establish a directional pull
+            total_gradient_force = torch.einsum("biy,byx->bix", force_coeffs, targets_norm)
 
-            # Centralize constraints over accumulated weights
-            accumulated_coeffs = force_coefficients.sum(dim=-1)
-            total_gradient_force = total_gradient_force - accumulated_coeffs.unsqueeze(-1) * anchored_gen_normalized
+            # Centralize constraints over accumulated weights to eliminate residual coordinate shifts
+            accumulated_coeffs = force_coeffs.sum(dim=-1)
+            total_gradient_force = total_gradient_force - accumulated_coeffs.unsqueeze(-1) * anchored_preds_norm
 
-            # Evaluate diagnostic force norm for the current thermodynamic state
+            # 3.7: Evaluate diagnostic localized force magnitude and accumulate step gradients
             force_magnitude = (total_gradient_force ** 2).mean()
             diagnostics[f"force_magnitude_T{temperature:.2f}"] = force_magnitude
 
-            # Standardize step vectors strictly across variable temperature intervals
+            # Standardize step vectors across varying T intervals so high-temp forces don't overpower local low-temp forces
             force_scale = torch.sqrt(torch.clamp(force_magnitude, min=1e-8))
             aggregated_forces = aggregated_forces + total_gradient_force / force_scale
 
-        # Formulate ideal target trajectory based on classical gradient descent approximation
-        theoretical_target = anchored_gen_normalized + aggregated_forces
+        # Formulate ideal optimization target based on classical simulated gradient descent logic
+        theoretical_target = anchored_preds_norm + aggregated_forces
 
-    # 4. Perform Gradient Projection (MSE against mathematically constructed objective fields)
-    trainable_gen_normalized = generated_trajectories / dimensional_scale.detach()
-    spatial_differential = trainable_gen_normalized - theoretical_target.detach()
+    # -------------------------------------------------------------------------
+    # Phase 4: Construct the End-to-End Pytorch MSE Backpropagation Graph
+    # -------------------------------------------------------------------------
+    # Re-attach trainable normalized predictions to allow AutoGrad to differentiate through the model
+    trainable_preds_norm = preds / dim_scale.detach()
     
-    # Calculate resultant policy error
-    dbp_loss = (spatial_differential ** 2).mean(dim=(-1, -2))
+    # Calculate difference between predictions and the theoretically formulated targets
+    spatial_diff = trainable_preds_norm - theoretical_target.detach()
+    
+    # Calculate resultant scalar policy error per item in the batch
+    # Reduces over Number of Gen (dim=-2) and Sequence Length / Dimensions (dim=-1)
+    dbp_loss = (spatial_diff ** 2).mean(dim=(-1, -2))
 
     # Average metrics strictly for logging purposes
     diagnostics = {k: v.mean() for k, v in diagnostics.items()}
