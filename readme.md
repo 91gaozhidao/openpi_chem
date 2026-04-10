@@ -1,12 +1,12 @@
-# Drifting Pi0: End-to-End Robot Control Policy with Drifting Loss
+# DBP-Pi0: End-to-End Robot Control Policy with Drift-Based Policy (DBP)
 
 ## 1. Overview
-This repository builds upon the Physical Intelligence [OpenPI](https://github.com/Physical-Intelligence/openpi) framework. The primary contribution of this codebase is the integration of a custom **Drifting Loss** objective, replacing the native Denoising Diffusion Probabilistic Model (DDPM) and Flow Matching paradigms in the Pi0 architecture. This modification is designed to improve the sample efficiency and robustness of end-to-end online robot control training.
+This repository builds upon the Physical Intelligence [OpenPI](https://github.com/Physical-Intelligence/openpi) framework. The primary contribution of this codebase is the integration of our proposed **Drift-Based Policy (DBP)**. By replacing the native Denoising Diffusion Probabilistic Model (DDPM) and Flow Matching paradigms in the Pi0 architecture with the DBP objective, this modification significantly improves the sample efficiency, robustness, and mathematical stability of online end-to-end robot control training.
 
 ## 2. Core Architecture Modifications
 
-- **Objective Function Redesign (`src/openpi/models_pytorch/pi0_pytorch.py`)**: 
-  The standard noise matching loss in the `forward()` pass has been completely substituted with our `drifting_loss` implementation. The `sample_actions()` function has also been correspondingly updated to support both single-step and multi-step Drifting inference generation.
+- **Objective Function Redesign (`src/openpi/models_pytorch/DBP_loss.py`)**: 
+  The standard noise matching loss in the Pi0 `forward()` pass has been completely substituted with our mathematically rigorous `compute_dbp_loss()` implementation. The `sample_actions()` function has also been correspondingly updated to support both single-step and multi-step DBP inference generation.
   
 - **Hyperparameter Integration (`src/openpi/models/pi0_config.py`)**: 
   The `Pi0Config` module has been extended to include hyperparameters specific to Drifting Loss, including `gen_per_label` (default: 4), `per_timestep_loss`, and the `temperatures` schedule.

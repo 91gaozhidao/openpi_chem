@@ -381,7 +381,7 @@ class PI0Pytorch(nn.Module):
 
         v_t = self._apply_checkpoint(action_out_proj_func, suffix_out)
 
-        from openpi.models_pytorch.drifting_util import drift_loss
+        from openpi.models_pytorch.DBP_loss import compute_dbp_loss
         
         pred_actions = v_t.view(B, G, self.config.action_horizon, self.config.action_dim)
         
@@ -391,13 +391,21 @@ class PI0Pytorch(nn.Module):
             for t in range(T_horizon):
                 gen_t = pred_actions[:, :, t, :]
                 pos_t = actions[:, t, :].unsqueeze(1)
-                loss_t, info_t = drift_loss(gen_t, pos_t, R_list=R_list)
+                loss_t, info_t = compute_dbp_loss(
+                    generated_trajectories=gen_t, 
+                    expert_demonstrations=pos_t, 
+                    temperature_schedule=R_list
+                )
                 total_loss = total_loss + loss_t
             loss = total_loss / T_horizon
         else:
             gen = pred_actions.reshape(B, G, -1)
             pos = actions.reshape(B, 1, -1)
-            loss, info = drift_loss(gen, pos, R_list=R_list)
+            loss, info = compute_dbp_loss(
+                generated_trajectories=gen, 
+                expert_demonstrations=pos, 
+                temperature_schedule=R_list
+            )
 
         return loss
 
