@@ -97,10 +97,8 @@ To instantiate the trained PyTorch policies for real-world execution or simulate
 
 ```bash
 # Instantiate the policy inference server
-nohup env CUDA_VISIBLE_DEVICES=1 XLA_PYTHON_CLIENT_MEM_FRACTION=.85 \
-    uv run --no-sync scripts/serve_policy.py \
+python scripts/serve_policy.py \
     policy:checkpoint \
-    --policy.config=pi0_chem \
-    --policy.dir=checkpoints/pi0_chem/pour20260407_drifting/latest_ckpt_step \
-    > output_serve.log 2>&1 &
+    --policy.config pi0_chem \
+    --policy.dir /data1/workspace/gaoyuxuan/openpi_chem/openpi/checkpoint/pi0_chem/pour20260407_drifting/3028
 ```
