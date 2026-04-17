@@ -17,6 +17,7 @@ class VAConfig(_model.BaseModelConfig):
     decoder_depth: int = 4
     decoder_num_heads: int = 8
     decoder_mlp_dim: int = 2048
+    gen_samples: int = 4
     temperatures: tuple[float, ...] = (0.02, 0.05, 0.2)
 
     action_dim: int = 32
@@ -52,8 +53,6 @@ class VAConfig(_model.BaseModelConfig):
                     "right_wrist_0_rgb": image_mask_spec,
                 },
                 state=jax.ShapeDtypeStruct([batch_size, self.action_dim], jnp.float32),
-                tokenized_prompt=jax.ShapeDtypeStruct([batch_size, self.max_token_len], jnp.int32),
-                tokenized_prompt_mask=jax.ShapeDtypeStruct([batch_size, self.max_token_len], jnp.bool_),
             )
         action_spec = jax.ShapeDtypeStruct([batch_size, self.action_horizon, self.action_dim], jnp.float32)
         return observation_spec, action_spec

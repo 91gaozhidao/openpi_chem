@@ -20,6 +20,8 @@ def main(args: Args) -> None:
         config,
         shuffle=args.shuffle,
         num_batches=args.num_batches,
+        skip_norm_stats=True,
+        framework="pytorch",
     )
     observation, actions = next(iter(loader))
 

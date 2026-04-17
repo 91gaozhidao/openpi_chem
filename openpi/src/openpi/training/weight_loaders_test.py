@@ -1,3 +1,4 @@
+import flax.nnx as nnx
 import jax
 import numpy as np
 
@@ -41,7 +42,8 @@ def test_vision_backbone_checkpoint_weight_loader(monkeypatch):
     def assert_img_loaded(value):
         if isinstance(value, jax.ShapeDtypeStruct):
             raise AssertionError("Vision weights should be loaded as arrays.")
-        np.asarray(value)
+        np.testing.assert_array_equal(np.asarray(value), np.ones_like(np.asarray(value)))
 
     jax.tree.map(assert_img_loaded, loaded["PaliGemma"]["img"])
-    assert isinstance(loaded["vision_proj"]["kernel"], jax.ShapeDtypeStruct)
+    np.testing.assert_array_equal(np.asarray(loaded["vision_proj"]["kernel"]), np.asarray(params["vision_proj"]["kernel"]))
+    np.testing.assert_array_equal(np.asarray(loaded["vision_proj"]["bias"]), np.asarray(params["vision_proj"]["bias"]))

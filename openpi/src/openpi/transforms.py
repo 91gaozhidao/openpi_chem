@@ -112,6 +112,14 @@ class InjectDefaultPrompt(DataTransformFn):
 
 
 @dataclasses.dataclass(frozen=True)
+class DropKeys(DataTransformFn):
+    keys: Sequence[str]
+
+    def __call__(self, data: DataDict) -> DataDict:
+        return {k: v for k, v in data.items() if k not in self.keys}
+
+
+@dataclasses.dataclass(frozen=True)
 class Normalize(DataTransformFn):
     norm_stats: at.PyTree[NormStats] | None
     # If true, will use quantile normalization. Otherwise, normal z-score normalization will be used.

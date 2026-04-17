@@ -1,5 +1,6 @@
 from flax import nnx
 import jax
+import jax.numpy as jnp
 import pytest
 
 from openpi.models import model as _model
@@ -84,6 +85,7 @@ def test_va_model():
         decoder_depth=2,
         decoder_num_heads=4,
         decoder_mlp_dim=128,
+        gen_samples=4,
     )
     model = config.create(key)
 
@@ -95,6 +97,53 @@ def test_va_model():
 
     actions = nnx_utils.module_jit(model.sample_actions)(key, obs)
     assert actions.shape == (batch_size, model.action_horizon, model.action_dim)
+
+
+def test_va_model_fixed_noise_is_reproducible():
+    key = jax.random.key(0)
+    config = va_config.VAConfig(
+        vision_variant="mu/16",
+        decoder_width=64,
+        decoder_depth=2,
+        decoder_num_heads=4,
+        decoder_mlp_dim=128,
+        gen_samples=4,
+    )
+    model = config.create(key)
+
+    batch_size = 2
+    obs = config.fake_obs(batch_size)
+    noise = jax.random.normal(jax.random.key(1), (batch_size, config.action_horizon, config.action_dim))
+
+    actions_1 = nnx_utils.module_jit(model.sample_actions)(key, obs, noise=noise)
+    actions_2 = nnx_utils.module_jit(model.sample_actions)(key, obs, noise=noise)
+
+    assert jnp.allclose(actions_1, actions_2)
+
+
+def test_va_model_different_noise_changes_output():
+    key = jax.random.key(0)
+    config = va_config.VAConfig(
+        vision_variant="mu/16",
+        decoder_width=64,
+        decoder_depth=2,
+        decoder_num_heads=4,
+        decoder_mlp_dim=128,
+        gen_samples=4,
+    )
+    model = config.create(key)
+
+    obs = config.fake_obs(batch_size=1)
+    repeated_obs = jax.tree.map(lambda x: jnp.repeat(x, config.gen_samples, axis=0), obs)
+    noise = jax.random.normal(
+        jax.random.key(2),
+        (config.gen_samples, config.action_horizon, config.action_dim),
+    )
+
+    preds = model.predict_actions(repeated_obs, train=False, noise=noise)
+
+    assert preds.shape == (config.gen_samples, config.action_horizon, config.action_dim)
+    assert not jnp.allclose(preds[0], preds[1])
 
 
 @pytest.mark.manual

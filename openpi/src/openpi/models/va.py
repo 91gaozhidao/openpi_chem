@@ -71,24 +71,21 @@ class _ActionDecoder(nn.Module):
     dtype_mm: str = "float32"
 
     @nn.compact
-    def __call__(self, context, context_mask):
+    def __call__(self, context, context_mask, noise_tokens):
         batch_size = context.shape[0]
-        query_tokens = self.param(
-            "query_tokens",
-            nn.initializers.normal(stddev=0.02),
-            (1, self.action_horizon, self.width),
-            jnp.float32,
-        )
         position_embeddings = self.param(
             "position_embeddings",
             nn.initializers.normal(stddev=0.02),
             (1, self.action_horizon, self.width),
             jnp.float32,
         )
-        queries = jnp.tile(query_tokens + position_embeddings, (batch_size, 1, 1)).astype(self.dtype_mm)
+        queries = (noise_tokens + position_embeddings).astype(self.dtype_mm)
 
         causal_mask = jnp.tril(jnp.ones((self.action_horizon, self.action_horizon), dtype=jnp.bool_))
-        self_mask = jnp.broadcast_to(causal_mask[None, None, :, :], (batch_size, 1, self.action_horizon, self.action_horizon))
+        self_mask = jnp.broadcast_to(
+            causal_mask[None, None, :, :],
+            (batch_size, 1, self.action_horizon, self.action_horizon),
+        )
         cross_mask = jnp.broadcast_to(
             context_mask[:, None, None, :],
             (batch_size, 1, self.action_horizon, context.shape[1]),
@@ -105,6 +102,24 @@ class _ActionDecoder(nn.Module):
 
         queries = nn.LayerNorm(dtype=self.dtype_mm, name="decoder_norm")(queries)
         return nn.Dense(self.action_dim, dtype=jnp.float32, name="action_head")(queries)
+
+
+def _repeat_batch(x: at.Array | None, repeats: int) -> at.Array | None:
+    if x is None:
+        return None
+    return jnp.repeat(x, repeats, axis=0)
+
+
+def _repeat_observation(observation: _model.Observation, repeats: int) -> _model.Observation:
+    return _model.Observation(
+        images={k: _repeat_batch(v, repeats) for k, v in observation.images.items()},
+        image_masks={k: _repeat_batch(v, repeats) for k, v in observation.image_masks.items()},
+        state=_repeat_batch(observation.state, repeats),
+        tokenized_prompt=_repeat_batch(observation.tokenized_prompt, repeats),
+        tokenized_prompt_mask=_repeat_batch(observation.tokenized_prompt_mask, repeats),
+        token_ar_mask=_repeat_batch(observation.token_ar_mask, repeats),
+        token_loss_mask=_repeat_batch(observation.token_loss_mask, repeats),
+    )
 
 
 class VA(_model.BaseModel):
@@ -127,6 +142,7 @@ class VA(_model.BaseModel):
 
         self.vision_proj = nnx.Linear(vision_width, config.decoder_width, rngs=rngs)
         self.state_proj = nnx.Linear(config.action_dim, config.decoder_width, rngs=rngs)
+        self.noise_proj = nnx.Linear(config.action_dim, config.decoder_width, rngs=rngs)
 
         decoder = nnx_bridge.ToNNX(
             _ActionDecoder(
@@ -142,6 +158,7 @@ class VA(_model.BaseModel):
         decoder.lazy_init(
             jnp.ones((1, 2, config.decoder_width), dtype=jnp.float32),
             jnp.ones((1, 2), dtype=jnp.bool_),
+            jnp.ones((1, config.action_horizon, config.action_dim), dtype=jnp.float32),
             rngs=rngs,
         )
         self.decoder = decoder
@@ -176,9 +193,13 @@ class VA(_model.BaseModel):
         observation: _model.Observation,
         *,
         train: bool,
+        noise: _model.Actions | None = None,
     ) -> _model.Actions:
+        if noise is None:
+            raise ValueError("VA.predict_actions requires an explicit noise tensor.")
         context_tokens, context_mask = self.encode_context(observation, train=train)
-        return self.decoder(context_tokens, context_mask)
+        noise_tokens = self.noise_proj(noise)
+        return self.decoder(context_tokens, context_mask, noise_tokens)
 
     @override
     def compute_loss(
@@ -189,15 +210,29 @@ class VA(_model.BaseModel):
         *,
         train: bool = False,
     ) -> at.Float[at.Array, " b"]:
+        preprocess_rng, noise_rng = jax.random.split(rng)
         observation = _model.preprocess_observation(
-            rng,
+            preprocess_rng,
             observation,
             train=train,
             image_keys=list(observation.images.keys()),
         )
-        pred_actions = self.predict_actions(observation, train=train)
+
+        batch_size = actions.shape[0]
+        gen_samples = self.config.gen_samples
+        action_noise = jax.random.normal(
+            noise_rng,
+            (batch_size, gen_samples, self.action_horizon, self.action_dim),
+            dtype=actions.dtype,
+        )
+        repeated_observation = _repeat_observation(observation, gen_samples)
+        pred_actions = self.predict_actions(
+            repeated_observation,
+            train=train,
+            noise=action_noise.reshape(batch_size * gen_samples, self.action_horizon, self.action_dim),
+        )
         loss, _ = dbp_loss.compute_dbp_loss(
-            preds=pred_actions.reshape(pred_actions.shape[0], 1, -1),
+            preds=pred_actions.reshape(batch_size, gen_samples, -1),
             pos_targets=actions.reshape(actions.shape[0], 1, -1),
             temp_schedule=self.config.temperatures,
         )
@@ -212,11 +247,13 @@ class VA(_model.BaseModel):
         noise: at.Float[at.Array, "b ah ad"] | None = None,
         num_steps: int | at.Int[at.Array, ""] | None = None,
     ) -> _model.Actions:
-        del rng, noise, num_steps
+        del num_steps
         observation = _model.preprocess_observation(
             None,
             observation,
             train=False,
             image_keys=list(observation.images.keys()),
         )
-        return self.predict_actions(observation, train=False)
+        if noise is None:
+            noise = jax.random.normal(rng, (observation.state.shape[0], self.action_horizon, self.action_dim))
+        return self.predict_actions(observation, train=False, noise=noise)

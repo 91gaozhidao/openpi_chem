@@ -19,7 +19,9 @@ class RunSpec:
 
 @dataclasses.dataclass
 class Args:
-    runs: list[RunSpec]
+    config_names: list[str] = dataclasses.field(default_factory=list)
+    checkpoint_dirs: list[str] = dataclasses.field(default_factory=list)
+    labels: list[str] = dataclasses.field(default_factory=list)
     state_dim: int = 7
     image_height: int = 224
     image_width: int = 224
@@ -71,9 +73,30 @@ def benchmark_run(spec: RunSpec, args: Args, example: dict) -> dict:
     }
 
 
+def resolve_runs(args: Args) -> list[RunSpec]:
+    if not args.config_names or not args.checkpoint_dirs:
+        raise ValueError("At least one config/checkpoint pair is required.")
+    if len(args.config_names) != len(args.checkpoint_dirs):
+        raise ValueError(
+            f"config_names and checkpoint_dirs must have the same length, got "
+            f"{len(args.config_names)} and {len(args.checkpoint_dirs)}."
+        )
+    if args.labels and len(args.labels) != len(args.config_names):
+        raise ValueError(
+            f"labels must be empty or match the number of runs, got "
+            f"{len(args.labels)} labels for {len(args.config_names)} runs."
+        )
+
+    labels = args.labels or [None] * len(args.config_names)
+    return [
+        RunSpec(config_name=config_name, checkpoint_dir=checkpoint_dir, label=label)
+        for config_name, checkpoint_dir, label in zip(args.config_names, args.checkpoint_dirs, labels, strict=True)
+    ]
+
+
 def main(args: Args) -> None:
     example = make_example(args)
-    results = [benchmark_run(run, args, example) for run in args.runs]
+    results = [benchmark_run(run, args, example) for run in resolve_runs(args)]
     print(json.dumps(results, indent=2, sort_keys=True))
 
 

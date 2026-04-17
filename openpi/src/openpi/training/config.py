@@ -142,6 +142,7 @@ class ModelTransformFactory(GroupFactory):
             case _model.ModelType.VA:
                 return _transforms.Group(
                     inputs=[
+                        _transforms.DropKeys(("prompt",)),
                         _transforms.ResizeImages(224, 224),
                         _transforms.PadStatesAndActions(model_config.action_dim),
                     ],
@@ -694,8 +695,9 @@ _CONFIGS = [
             decoder_depth=4,
             decoder_num_heads=8,
             decoder_mlp_dim=2048,
+            gen_samples=4,
         ),
-        batch_size=32,
+        batch_size=8,
         data=ChemDataConfig(
             repo_id="/data1/shared_workspace/embodied_chemist/data/pour20260407_right",
             assets=AssetsConfig(
@@ -721,6 +723,7 @@ _CONFIGS = [
             decoder_depth=4,
             decoder_num_heads=8,
             decoder_mlp_dim=2048,
+            gen_samples=4,
         ),
         batch_size=2,
         data=ChemDataConfig(
@@ -1157,6 +1160,7 @@ _CONFIGS = [
             decoder_depth=2,
             decoder_num_heads=4,
             decoder_mlp_dim=128,
+            gen_samples=4,
         ),
         data=FakeDataConfig(),
         batch_size=2,
