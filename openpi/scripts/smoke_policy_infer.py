@@ -17,6 +17,7 @@ class Args:
     image_height: int = 224
     image_width: int = 224
     broker: bool = False
+    broker_action_horizon: int = 16
     broker_steps: int | None = None
     seed: int = 0
 
@@ -46,8 +47,8 @@ def main(args: Args) -> None:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return
 
-    horizon = args.broker_steps or config.model.action_horizon
-    broker = ActionChunkBroker(policy, action_horizon=config.model.action_horizon)
+    horizon = args.broker_steps or args.broker_action_horizon
+    broker = ActionChunkBroker(policy, action_horizon=args.broker_action_horizon)
     step_shapes = []
     for _ in range(horizon):
         outputs = broker.infer(example)
@@ -56,6 +57,8 @@ def main(args: Args) -> None:
     payload = {
         "mode": "broker",
         "steps": horizon,
+        "broker_action_horizon": args.broker_action_horizon,
+        "model_action_horizon": config.model.action_horizon,
         "step_action_shapes": step_shapes,
     }
     print(json.dumps(payload, indent=2, sort_keys=True))

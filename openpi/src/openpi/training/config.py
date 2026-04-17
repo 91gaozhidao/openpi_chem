@@ -696,8 +696,9 @@ _CONFIGS = [
             decoder_num_heads=8,
             decoder_mlp_dim=2048,
             gen_samples=4,
+            action_horizon=50,
         ),
-        batch_size=8,
+        batch_size=2,
         data=ChemDataConfig(
             repo_id="/data1/shared_workspace/embodied_chemist/data/pour20260407_right",
             assets=AssetsConfig(
@@ -724,6 +725,7 @@ _CONFIGS = [
             decoder_num_heads=8,
             decoder_mlp_dim=2048,
             gen_samples=4,
+            action_horizon=50,
         ),
         batch_size=2,
         data=ChemDataConfig(
@@ -1161,6 +1163,7 @@ _CONFIGS = [
             decoder_num_heads=4,
             decoder_mlp_dim=128,
             gen_samples=4,
+            action_horizon=50,
         ),
         data=FakeDataConfig(),
         batch_size=2,

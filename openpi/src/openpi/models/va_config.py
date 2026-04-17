@@ -21,7 +21,7 @@ class VAConfig(_model.BaseModelConfig):
     temperatures: tuple[float, ...] = (0.02, 0.05, 0.2)
 
     action_dim: int = 32
-    action_horizon: int = 16
+    action_horizon: int = 50
     max_token_len: int = 1
 
     @property
