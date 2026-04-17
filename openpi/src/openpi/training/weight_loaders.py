@@ -73,6 +73,33 @@ class PaliGemmaWeightLoader(WeightLoader):
         return _merge_params(loaded_params, params, missing_regex=".*")
 
 
+@dataclasses.dataclass(frozen=True)
+class VisionBackboneCheckpointWeightLoader(WeightLoader):
+    """Load only compatible vision-backbone weights from a checkpoint."""
+
+    params_path: str
+    prefix: str = "PaliGemma/img"
+
+    def load(self, params: at.Params) -> at.Params:
+        loaded_params = _model.restore_params(download.maybe_download(self.params_path), restore_type=np.ndarray)
+        flat_ref = flax.traverse_util.flatten_dict(params, sep="/")
+        flat_loaded = flax.traverse_util.flatten_dict(loaded_params, sep="/")
+
+        result = {}
+        prefix = f"{self.prefix}/"
+        for key, value in flat_loaded.items():
+            if not key.startswith(prefix):
+                continue
+            if key in flat_ref:
+                result[key] = value.astype(flat_ref[key].dtype) if value.dtype != flat_ref[key].dtype else value
+
+        for key, value in flat_ref.items():
+            if key not in result:
+                result[key] = value
+
+        return flax.traverse_util.unflatten_dict(result, sep="/")
+
+
 def _merge_params(loaded_params: at.Params, params: at.Params, *, missing_regex: str) -> at.Params:
     """Merges the loaded parameters with the reference parameters.
 

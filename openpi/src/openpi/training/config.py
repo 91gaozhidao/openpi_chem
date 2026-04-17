@@ -16,6 +16,7 @@ import tyro
 import openpi.models.model as _model
 import openpi.models.pi0_config as pi0_config
 import openpi.models.pi0_fast as pi0_fast
+import openpi.models.va_config as va_config
 import openpi.models.tokenizer as _tokenizer
 # chem
 import openpi.policies.chem_policy as chem_policy
@@ -135,6 +136,13 @@ class ModelTransformFactory(GroupFactory):
                             _tokenizer.PaligemmaTokenizer(model_config.max_token_len),
                             discrete_state_input=model_config.discrete_state_input,
                         ),
+                        _transforms.PadStatesAndActions(model_config.action_dim),
+                    ],
+                )
+            case _model.ModelType.VA:
+                return _transforms.Group(
+                    inputs=[
+                        _transforms.ResizeImages(224, 224),
                         _transforms.PadStatesAndActions(model_config.action_dim),
                     ],
                 )
@@ -678,6 +686,62 @@ _CONFIGS = [
         # Turn off EMA for LoRA finetuning.
         ema_decay=None,
     ),
+    TrainConfig(
+        name="dbp_va_chem",
+        model=va_config.VAConfig(
+            vision_variant="So400m/14",
+            decoder_width=512,
+            decoder_depth=4,
+            decoder_num_heads=8,
+            decoder_mlp_dim=2048,
+        ),
+        batch_size=32,
+        data=ChemDataConfig(
+            repo_id="/data1/shared_workspace/embodied_chemist/data/pour20260407_right",
+            assets=AssetsConfig(
+                assets_dir="/data1/workspace/gaoyuxuan/openpi_chem/openpi/pretrained/openpi-assets/checkpoints/pi0_base/assets",
+            ),
+            base_config=DataConfig(
+                prompt_from_task=True,
+                repo_id="xixihaha",
+            ),
+        ),
+        weight_loader=weight_loaders.VisionBackboneCheckpointWeightLoader(
+            "/data1/workspace/gaoyuxuan/openpi_chem/openpi/pretrained/openpi-assets/checkpoints/pi0_base/params"
+        ),
+        num_train_steps=12115,
+        save_interval=3028,
+        keep_period=3028,
+    ),
+    TrainConfig(
+        name="dbp_va_chem_smoke",
+        model=va_config.VAConfig(
+            vision_variant="So400m/14",
+            decoder_width=512,
+            decoder_depth=4,
+            decoder_num_heads=8,
+            decoder_mlp_dim=2048,
+        ),
+        batch_size=2,
+        data=ChemDataConfig(
+            repo_id="/data1/shared_workspace/embodied_chemist/data/pour20260407_right",
+            assets=AssetsConfig(
+                assets_dir="/data1/workspace/gaoyuxuan/openpi_chem/openpi/pretrained/openpi-assets/checkpoints/pi0_base/assets",
+            ),
+            base_config=DataConfig(
+                prompt_from_task=True,
+                repo_id="xixihaha",
+            ),
+        ),
+        weight_loader=weight_loaders.VisionBackboneCheckpointWeightLoader(
+            "/data1/workspace/gaoyuxuan/openpi_chem/openpi/pretrained/openpi-assets/checkpoints/pi0_base/params"
+        ),
+        num_train_steps=4,
+        log_interval=1,
+        save_interval=2,
+        keep_period=2,
+        wandb_enabled=False,
+    ),
     # chem
 
 
@@ -1083,6 +1147,22 @@ _CONFIGS = [
         num_train_steps=10,
         overwrite=True,
         exp_name="debug_pi05",
+        wandb_enabled=False,
+    ),
+    TrainConfig(
+        name="debug_va",
+        model=va_config.VAConfig(
+            vision_variant="mu/16",
+            decoder_width=64,
+            decoder_depth=2,
+            decoder_num_heads=4,
+            decoder_mlp_dim=128,
+        ),
+        data=FakeDataConfig(),
+        batch_size=2,
+        num_train_steps=10,
+        overwrite=True,
+        exp_name="debug_va",
         wandb_enabled=False,
     ),
     #

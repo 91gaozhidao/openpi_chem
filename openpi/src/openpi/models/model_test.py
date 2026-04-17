@@ -5,6 +5,7 @@ import pytest
 from openpi.models import model as _model
 from openpi.models import pi0_config
 from openpi.models import pi0_fast
+from openpi.models import va_config
 from openpi.shared import download
 from openpi.shared import nnx_utils
 
@@ -73,6 +74,27 @@ def test_pi0_fast_lora_model():
 
     lora_state_elems = list(model_state.filter(lora_filter))
     assert len(lora_state_elems) > 0
+
+
+def test_va_model():
+    key = jax.random.key(0)
+    config = va_config.VAConfig(
+        vision_variant="mu/16",
+        decoder_width=64,
+        decoder_depth=2,
+        decoder_num_heads=4,
+        decoder_mlp_dim=128,
+    )
+    model = config.create(key)
+
+    batch_size = 2
+    obs, act = config.fake_obs(batch_size), config.fake_act(batch_size)
+
+    loss = nnx_utils.module_jit(model.compute_loss)(key, obs, act)
+    assert loss.shape == (batch_size,)
+
+    actions = nnx_utils.module_jit(model.sample_actions)(key, obs)
+    assert actions.shape == (batch_size, model.action_horizon, model.action_dim)
 
 
 @pytest.mark.manual
