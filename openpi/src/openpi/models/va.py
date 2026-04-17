@@ -158,7 +158,7 @@ class VA(_model.BaseModel):
         decoder.lazy_init(
             jnp.ones((1, 2, config.decoder_width), dtype=jnp.float32),
             jnp.ones((1, 2), dtype=jnp.bool_),
-            jnp.ones((1, config.action_horizon, config.action_dim), dtype=jnp.float32),
+            jnp.ones((1, config.action_horizon, config.decoder_width), dtype=jnp.float32),
             rngs=rngs,
         )
         self.decoder = decoder
